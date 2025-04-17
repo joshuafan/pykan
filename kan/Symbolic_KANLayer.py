@@ -51,7 +51,8 @@ class Symbolic_KANLayer(nn.Module):
         super(Symbolic_KANLayer, self).__init__()
         self.out_dim = out_dim
         self.in_dim = in_dim
-        self.mask = torch.nn.Parameter(torch.zeros(out_dim, in_dim, device=device)).requires_grad_(False)
+        self.register_buffer("mask", torch.zeros(out_dim, in_dim, device=device))  # @joshuafan changed to a buffer
+        # self.mask = torch.nn.Parameter(torch.zeros(out_dim, in_dim, device=device)).requires_grad_(False)
         # torch
         self.funs = [[lambda x: x*0. for i in range(self.in_dim)] for j in range(self.out_dim)]
         self.funs_avoid_singularity = [[lambda x, y_th: ((), x*0.) for i in range(self.in_dim)] for j in range(self.out_dim)]

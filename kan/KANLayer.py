@@ -37,11 +37,15 @@ class KANLayer(nn.Module):
         grid_eps: float in [0,1]
             a hyperparameter used in update_grid_from_samples. When grid_eps = 1, the grid is uniform; when grid_eps = 0, the grid is partitioned using percentiles of samples. 0 < grid_eps < 1 interpolates between the two extremes.
             the id of activation functions that are locked
+        grid_margin: float
+            a hyperparameter used in update_grid_from_samples; applies for UNIFORM grid only. How much of a margin to leave around the data points in x, given in units of x-range (x.max() - x.min()).
+            In original KAN repo, this was set to 0. If set to 1, and x originally ranged from [0, 1], the grid would range between [-1, 2] (EXCLUDING the extended points).
+
         device: str
             device
     """
 
-    def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False):
+    def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False, residual=False):
         ''''
         initialize a KANLayer
         
@@ -77,6 +81,8 @@ class KANLayer(nn.Module):
                 device
             sparse_init : bool
                 if sparse_init = True, sparse initialization is applied.
+            residual : bool
+                whether to use residual connections. in this case, out_dim must be greater than_dim
             
         Returns:
         --------
@@ -94,19 +100,33 @@ class KANLayer(nn.Module):
         self.in_dim = in_dim
         self.num = num
         self.k = k
-
+        self.residual = residual
+        if self.residual:
+            assert self.out_dim > self.in_dim, "If using residual connections, out_dim must be greater than in_dim"
+            self.spline_out_dim = self.out_dim - self.in_dim
+        else:
+            self.spline_out_dim = self.out_dim
         grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1)[None,:].expand(self.in_dim, num+1)
         grid = extend_grid(grid, k_extend=k)
-        self.grid = torch.nn.Parameter(grid).requires_grad_(False)
-        noises = (torch.rand(self.num+1, self.in_dim, self.out_dim) - 1/2) * noise_scale / num
+        # self.grid = torch.nn.Parameter(grid).requires_grad_(False)
+        self.register_buffer("grid", grid)  # @joshuafan changed grid to a buffer
+        noises = (torch.rand(self.num+1, self.in_dim, self.spline_out_dim) - 1/2) * noise_scale / num
 
         self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))
         
         if sparse_init:
-            self.mask = torch.nn.Parameter(sparse_mask(in_dim, out_dim)).requires_grad_(False)
+            if self.residual:
+                res_mask = torch.eye(in_dim, in_dim)
+                sparse_mask = sparse_mask(in_dim, self.spline_out_dim)
+                self.register_buffer("mask", torch.cat([res_mask, sparse_mask], dim=1))
+                # self.mask = torch.nn.Parameter(torch.cat([res_mask, sparse_mask], dim=1)).requires_grad_(False)
+            else:
+                self.register_buffer("mask", sparse_mask(in_dim, out_dim))
+                # self.mask = torch.nn.Parameter(sparse_mask(in_dim, out_dim)).requires_grad_(False)
         else:
-            self.mask = torch.nn.Parameter(torch.ones(in_dim, out_dim)).requires_grad_(False)
-        
+            self.register_buffer("mask", torch.ones(in_dim, out_dim))
+            # self.mask = torch.nn.Parameter(torch.ones(in_dim, out_dim)).requires_grad_(False)
+
         self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
                          scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
         self.scale_sp = torch.nn.Parameter(torch.ones(in_dim, out_dim) * scale_sp * 1 / np.sqrt(in_dim) * self.mask).requires_grad_(sp_trainable)  # make scale trainable
@@ -114,6 +134,7 @@ class KANLayer(nn.Module):
 
         
         self.grid_eps = grid_eps
+        self.grid_margin = grid_margin
         
         self.to(device)
         
@@ -151,17 +172,33 @@ class KANLayer(nn.Module):
         >>> y.shape, preacts.shape, postacts.shape, postspline.shape
         '''
         batch = x.shape[0]
-        preacts = x[:,None,:].clone().expand(batch, self.out_dim, self.in_dim)
-            
+
+        # if using residual, create a copy of the input x and reshape it to match the format of y.
+        # Since y has shape [batch, in_dim, in_dim], but x has shape [batch, in_dim],
+        # populate the diagonal of each example's matrix with x.
+        if self.residual:
+            x_diagonal = torch.zeros((batch, self.in_dim, self.in_dim))
+            idx = torch.arange(self.in_dim)
+
+            # fill in the diagonal of each example's matrix with x[i].
+            # x_diagonal has shape [batch, in_dim, in_dim]
+            # Source: https://discuss.pytorch.org/t/set-diagonal-of-each-matrix-in-a-batch-to-0/113646/2
+            x_diagonal[:, idx, idx] = x
+            preacts = x[:,None,:].clone().expand(batch, self.out_dim - self.in_dim, self.in_dim)
+            preacts = torch.cat([x_diagonal, preacts], dim=1)  # prepend the residual to preacts
+        else:
+            preacts = x[:,None,:].clone().expand(batch, self.out_dim, self.in_dim)
+
         base = self.base_fun(x) # (batch, in_dim)
-        y = coef2curve(x_eval=x, grid=self.grid, coef=self.coef, k=self.k)
-        
+        y = coef2curve(x_eval=x, grid=self.grid, coef=self.coef, k=self.k)  # y: (batch, in_dim, other_out_dim)
+        if self.residual:
+            y = torch.cat([x_diagonal, y], dim=2)  # prepend the residual to y (output)
         postspline = y.clone().permute(0,2,1)
-            
+
         y = self.scale_base[None,:,:] * base[:,:,None] + self.scale_sp[None,:,:] * y
         y = self.mask[None,:,:] * y
         
-        postacts = y.clone().permute(0,2,1)
+        postacts = y.clone().permute(0,2,1)  # [batch, out_dim, in_dim]
             
         y = torch.sum(y, dim=1)
         return y, preacts, postacts, postspline
@@ -174,7 +211,7 @@ class KANLayer(nn.Module):
         -----
             x : 2D torch.float
                 inputs, shape (number of samples, input dimension)
-            
+
         Returns:
         --------
             None
@@ -197,12 +234,13 @@ class KANLayer(nn.Module):
         def get_grid(num_interval):
             ids = [int(batch / num_interval * i) for i in range(num_interval)] + [-1]
             grid_adaptive = x_pos[ids, :].permute(1,0)
-            margin = 0.00
+            # margin = 0.00
+            margin = self.grid_margin * (grid_adaptive[:,[-1]] - grid_adaptive[:,[0]]) # NOTE TODO @joshuafan Trying a wider margin
             h = (grid_adaptive[:,[-1]] - grid_adaptive[:,[0]] + 2 * margin)/num_interval
             grid_uniform = grid_adaptive[:,[0]] - margin + h * torch.arange(num_interval+1,)[None, :].to(x.device)
             grid = self.grid_eps * grid_uniform + (1 - self.grid_eps) * grid_adaptive
             return grid
-        
+
         
         grid = get_grid(num_interval)
         
@@ -249,7 +287,7 @@ class KANLayer(nn.Module):
         y_eval = coef2curve(x_pos, parent.grid, parent.coef, parent.k)
         num_interval = self.grid.shape[1] - 1 - 2*self.k
         
-        
+
         '''
         # based on samples
         def get_grid(num_interval):
@@ -313,9 +351,14 @@ class KANLayer(nn.Module):
         >>> kanlayer_small.in_dim, kanlayer_small.out_dim
         (2, 3)
         '''
-        spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun)
-        spb.grid.data = self.grid[in_id]
-        spb.coef.data = self.coef[in_id][:,out_id]
+        spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun, residual=self.residual)  # @joshuafan
+        if self.residual:
+            in_id_excl_residual = np.array(in_id) - self.in_dim
+            in_id_excl_residual = in_id_excl_residual[in_id_excl_residual >= 0]
+        else:
+            in_id_excl_residual = in_id
+        spb.grid.data = self.grid[in_id_excl_residual]
+        spb.coef.data = self.coef[in_id_excl_residual][:,out_id]
         spb.scale_base.data = self.scale_base[in_id][:,out_id]
         spb.scale_sp.data = self.scale_sp[in_id][:,out_id]
         spb.mask.data = self.mask[in_id][:,out_id]
@@ -361,4 +404,3 @@ class KANLayer(nn.Module):
             swap_(self.scale_base.data, i1, i2, mode=mode)
             swap_(self.scale_sp.data, i1, i2, mode=mode)
             swap_(self.mask.data, i1, i2, mode=mode)
-
