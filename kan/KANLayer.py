@@ -127,8 +127,19 @@ class KANLayer(nn.Module):
             self.register_buffer("mask", torch.ones(in_dim, out_dim))
             # self.mask = torch.nn.Parameter(torch.ones(in_dim, out_dim)).requires_grad_(False)
 
-        self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
+        if base_fun == "silu_identity":
+            # Special case to handle Silu+identity base function
+            self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
                          scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
+            self.scale_silu = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
+                         scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
+            
+            # Place the offset in the middle of the grid for each input variable
+            self.silu_input_offset = torch.nn.Parameter(grid[:, [grid.shape[1] // 2]].repeat(1, out_dim)).requires_grad_(sb_trainable)
+            self.silu_input_scale = torch.nn.Parameter(torch.ones((in_dim, out_dim))).requires_grad_(sb_trainable)
+        else:
+            self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
+                            scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
         self.scale_sp = torch.nn.Parameter(torch.ones(in_dim, out_dim) * scale_sp * 1 / np.sqrt(in_dim) * self.mask).requires_grad_(sp_trainable)  # make scale trainable
         self.base_fun = base_fun
 
@@ -142,6 +153,25 @@ class KANLayer(nn.Module):
         super(KANLayer, self).to(device)
         self.device = device    
         return self
+
+    def compute_base_fun(self, x):
+        """
+        Helper function that just returns the base function.
+        Args:
+        -----
+            x : 2D torch.float
+                inputs, shape (number of samples, input dimension)
+        
+        Returns:
+            value of base function applied at each element in x
+                (number of samples, input dimension)
+        """
+        if self.base_fun == "silu_identity":
+            import torch.nn.functional as F
+            return self.scale_base[None,:,:] * x[:,:,None] + self.scale_silu[None,:,:] * F.relu(self.silu_input_scale[None,:,:] * (x[:,:,None] - self.silu_input_offset[None,:,:]))
+        else:
+            return self.base_fun(x)
+
 
     def forward(self, x):
         '''
@@ -189,17 +219,24 @@ class KANLayer(nn.Module):
         else:
             preacts = x[:,None,:].clone().expand(batch, self.out_dim, self.in_dim)
 
-        base = self.base_fun(x) # (batch, in_dim)
         y = coef2curve(x_eval=x, grid=self.grid, coef=self.coef, k=self.k)  # y: (batch, in_dim, other_out_dim)
         if self.residual:
             y = torch.cat([x_diagonal, y], dim=2)  # prepend the residual to y (output)
         postspline = y.clone().permute(0,2,1)
 
-        y = self.scale_base[None,:,:] * base[:,:,None] + self.scale_sp[None,:,:] * y
+        if self.base_fun == "silu_identity":
+            # Hybrid silu/identity base function
+            import torch.nn.functional as F
+            # print("Check - scale_base", self.scale_base, "Scale silu", self.scale_silu, "silu input scale", self.silu_input_scale, self.silu_input_offset)
+            base = self.scale_base[None,:,:] * x[:,:,None] + self.scale_silu[None,:,:] * F.relu(self.silu_input_scale[None,:,:] * (x[:,:,None] - self.silu_input_offset[None,:,:]))
+            # print("Base", base, "Scale sp", self.scale_sp, "Y", y)
+            y = base + self.scale_sp[None,:,:] * y
+        else:
+            base = self.base_fun(x) # (batch, in_dim)
+            y = self.scale_base[None,:,:] * base[:,:,None] + self.scale_sp[None,:,:] * y
         y = self.mask[None,:,:] * y
-        
         postacts = y.clone().permute(0,2,1)  # [batch, out_dim, in_dim]
-            
+
         y = torch.sum(y, dim=1)
         return y, preacts, postacts, postspline
 
@@ -253,6 +290,9 @@ class KANLayer(nn.Module):
         #print('x_pos 2', x_pos.shape)
         #print('y_eval 2', y_eval.shape)
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
+        if self.base_fun == "silu_identity":
+            self.silu_input_offset.data = grid[:, [grid.shape[1] // 2]].repeat(1, y_eval.shape[2])  # [in_dim, out_dim]
+
 
     def initialize_grid_from_parent(self, parent, x, mode='sample'):
         '''
@@ -360,6 +400,11 @@ class KANLayer(nn.Module):
         spb.grid.data = self.grid[in_id_excl_residual]
         spb.coef.data = self.coef[in_id_excl_residual][:,out_id]
         spb.scale_base.data = self.scale_base[in_id][:,out_id]
+        if self.base_fun == "silu_residual":
+            spb.scale_silu.data = self.scale_silu[in_id][:,out_id]
+            spb.silu_input_offset.data = self.silu_input_offset[in_id][:,out_id]
+            spb.silu_input_scale.data = self.silu_input_scale[in_id][:,out_id]
+
         spb.scale_sp.data = self.scale_sp[in_id][:,out_id]
         spb.mask.data = self.mask[in_id][:,out_id]
 
@@ -402,5 +447,9 @@ class KANLayer(nn.Module):
                 swap_(self.grid.data, i1, i2, mode='in')
             swap_(self.coef.data, i1, i2, mode=mode)
             swap_(self.scale_base.data, i1, i2, mode=mode)
+            if self.base_fun == "silu_identity":
+                swap_(self.scale_silu.data, i1, i2, mode=mode)
+                swap_(self.silu_input_offset.data, i1, i2, mode=mode)
+                swap_(self.silu_input_scale.data, i1, i2, mode=mode)
             swap_(self.scale_sp.data, i1, i2, mode=mode)
             swap_(self.mask.data, i1, i2, mode=mode)

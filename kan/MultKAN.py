@@ -416,6 +416,10 @@ class MultKAN(nn.Module):
             self.act_fun[l].scale_base.data = another_model.act_fun[l].scale_base.data
             self.act_fun[l].scale_sp.data = another_model.act_fun[l].scale_sp.data
             self.act_fun[l].mask.data = another_model.act_fun[l].mask.data
+            if another_model.base_fun == "silu_identity":
+                self.act_fun[l].scale_silu.data = another_model.act_fun[l].scale_silu.data
+                self.act_fun[l].silu_input_offset.data = another_model.act_fun[l].silu_input_offset.data
+                self.act_fun[l].silu_input_scale.data = another_model.act_fun[l].silu_input_scale.data
 
         for l in range(self.depth):
             self.node_bias[l].data = another_model.node_bias[l].data
@@ -1107,8 +1111,7 @@ class MultKAN(nn.Module):
             
         if metric == 'backward':
             self.attribute()
-            
-        
+
         if not os.path.exists(folder):
             os.makedirs(folder)
         # matplotlib.use('Agg')
@@ -1118,6 +1121,15 @@ class MultKAN(nn.Module):
         depth = len(self.width) - 1
         for l in range(depth):
             w_large = 2.0
+
+            # Also compute function outside of data input range
+            min_grid = self.act_fun[l].grid[:, 0]
+            max_grid = self.act_fun[l].grid[:, -1]
+            grid_inputs = torch.empty((50, min_grid.shape[0]))
+            for input_idx in range(min_grid.shape[0]):
+                grid_inputs[:, input_idx] = torch.linspace(min_grid[input_idx], max_grid[input_idx], 50)
+            y, grid_preacts, grid_postacts, grid_postspline = self.act_fun[l].forward(grid_inputs)
+
             for i in range(self.width_in[l]):
                 for j in range(self.width_out[l+1]):
                     rank = torch.argsort(self.acts[l][:, i])
@@ -1170,12 +1182,15 @@ class MultKAN(nn.Module):
                     # Plot version with ticks
                     plt.xticks()  # Restore default ticks
                     plt.yticks()
-                    plt.plot(self.acts[l][:, i][rank].cpu().detach().numpy(), self.spline_postacts[l][:, j, i][rank].cpu().detach().numpy())  # , color=color, lw=10)  # @joshuafan changed lw (line width)
+                    plt.scatter(self.acts[l][:, i][rank].cpu().detach().numpy(), self.spline_postacts[l][:, j, i][rank].cpu().detach().numpy(), label="Evaluated at datapoints")  # , color=color, lw=10)  # @joshuafan changed lw (line width)
+                    if not torch.allclose(grid_postacts[:, j, i], torch.zeros_like(grid_postacts[:, j, i])):
+                        # Only plot this if grid_postacts is not all zero (meaning edge was not masked out)
+                        plt.plot(grid_preacts[:, j, i].cpu().detach().numpy(), grid_postacts[:, j, i].cpu().detach().numpy(), color='green', linestyle='--', label="Evaluated at evenly spaced points")  # evenly spaced
                     plt.xlabel("Input")
                     plt.ylabel("Post-activation output")
+                    plt.legend()
                     plt.savefig(f'{folder}/sp_{l}_{i}_{j}_ticks.png')  # , bbox_inches="tight", dpi=400)
                     plt.close()
-
 
         def score2alpha(score):
             return np.tanh(beta * score)
@@ -1456,12 +1471,9 @@ class MultKAN(nn.Module):
         for i in range(len(self.act_fun)):
             coeff_l1 = torch.sum(torch.mean(torch.abs(self.act_fun[i].coef), dim=1))
 
-            edge_weight = acts_scale[i].permute((1, 0))  # Permute to [in_dim, out_dim]
-            edge_weight = edge_weight / edge_weight.sum()
-
             # Note that self.act_fun[i].coef has shape [in_dim, out_dim, n_splines]
             # By default, diff is over the last dimension (splines)
-            coeff_diff_l1 = (edge_weight * torch.diff(self.act_fun[i].coef).abs().sum(dim=2)).sum()
+            coeff_diff_l1 = torch.diff(self.act_fun[i].coef).abs().mean(dim=2).sum()
 
             # coeff_diff_l1 = torch.sum(torch.mean(torch.abs(torch.diff(self.act_fun[i].coef)), dim=1))
             reg_ += lamb_coef * coeff_l1 + lamb_coefdiff * coeff_diff_l1
@@ -2737,7 +2749,11 @@ class MultKAN(nn.Module):
                         self.act_fun[l].mask.data[i][j] = torch.tensor(1.)
                         self.act_fun[l].scale_base.data[i][j] = torch.tensor(0.)
                         self.act_fun[l].scale_sp.data[i][j] = torch.tensor(0.)
-                        
+                        if self.base_fun == "silu_identity":
+                            self.act_fun[l].scale_silu.data[i][j] = torch.tensor(0.)
+                            self.act_fun[l].silu_input_offset.data[i][j] = torch.tensor(0.)
+                            self.act_fun[l].silu_input_scale.data[i][j] = torch.tensor(0.)
+
         self.get_act(self.cache_data)
         
         self.log_history('perturb')
