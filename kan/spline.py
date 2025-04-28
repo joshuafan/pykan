@@ -141,7 +141,7 @@ def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=1):
     # For row i, position (i, i) contains -1 and position (i, i+1) contains 1. Other entries in the row are 0.
     # When we multiply this D matrix by the coef vector "a", we get a vector:
     # Da = [ a2-a1, a3-a2, a4-a3, ... ]^T
-    D = torch.zeros((n_coef-1, n_coef))
+    D = torch.zeros((n_coef-1, n_coef), device=device)
     D[range(0, n_coef-1), range(0, n_coef-1)] = -1  # Fill in the (i, i) diagonal with -1
     D[range(0, n_coef-1), range(1, n_coef)] = 1  # Fill in the (i, i+1) diagonal with 1
     B = mat  # [in_dim, out_dim, batch, n_coef]

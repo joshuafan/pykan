@@ -45,7 +45,8 @@ class KANLayer(nn.Module):
             device
     """
 
-    def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False, residual=False):
+    def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False, residual=False,
+                 drop_rate=0.0, drop_mode='postact', drop_scale=True):
         ''''
         initialize a KANLayer
         
@@ -106,17 +107,17 @@ class KANLayer(nn.Module):
             self.spline_out_dim = self.out_dim - self.in_dim
         else:
             self.spline_out_dim = self.out_dim
-        grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1)[None,:].expand(self.in_dim, num+1)
+        grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1, device=device)[None,:].expand(self.in_dim, num+1)
         grid = extend_grid(grid, k_extend=k)
         # self.grid = torch.nn.Parameter(grid).requires_grad_(False)
         self.register_buffer("grid", grid)  # @joshuafan changed grid to a buffer
-        noises = (torch.rand(self.num+1, self.in_dim, self.spline_out_dim) - 1/2) * noise_scale / num
+        noises = (torch.rand(self.num+1, self.in_dim, self.spline_out_dim, device=device) - 1/2) * noise_scale / num
 
         self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))
         
         if sparse_init:
             if self.residual:
-                res_mask = torch.eye(in_dim, in_dim)
+                res_mask = torch.eye(in_dim, in_dim, device=device)
                 sparse_mask = sparse_mask(in_dim, self.spline_out_dim)
                 self.register_buffer("mask", torch.cat([res_mask, sparse_mask], dim=1))
                 # self.mask = torch.nn.Parameter(torch.cat([res_mask, sparse_mask], dim=1)).requires_grad_(False)
@@ -129,26 +130,26 @@ class KANLayer(nn.Module):
 
         if base_fun == "silu_identity":
             # Special case to handle Silu+identity base function
-            self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
-                         scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
             self.scale_silu = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
                          scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
             
             # Place the offset in the middle of the grid for each input variable
             self.silu_input_offset = torch.nn.Parameter(grid[:, [grid.shape[1] // 2]].repeat(1, out_dim)).requires_grad_(sb_trainable)
             self.silu_input_scale = torch.nn.Parameter(torch.ones((in_dim, out_dim))).requires_grad_(sb_trainable)
-        else:
-            self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
-                            scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
+
+        self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
+                        scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
         self.scale_sp = torch.nn.Parameter(torch.ones(in_dim, out_dim) * scale_sp * 1 / np.sqrt(in_dim) * self.mask).requires_grad_(sp_trainable)  # make scale trainable
         self.base_fun = base_fun
 
-        
         self.grid_eps = grid_eps
         self.grid_margin = grid_margin
-        
+        self.drop_rate = drop_rate
+        self.drop_mode = drop_mode
+        self.drop_scale = drop_scale
         self.to(device)
-        
+
+
     def to(self, device):
         super(KANLayer, self).to(device)
         self.device = device    
@@ -203,6 +204,16 @@ class KANLayer(nn.Module):
         '''
         batch = x.shape[0]
 
+        # Standard (node-based) dropout. https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKANLayer.py
+        if self.training:
+            if self.drop_mode == 'dropout' and self.drop_rate > 0 and self.drop_scale:
+                #print('dropout with scale')
+                mask = torch.empty(x.shape, device=x.device).bernoulli_(1 - self.drop_rate)
+                x = x * mask / (1 - self.drop_rate)
+            elif self.drop_mode == 'dropout' and self.drop_rate > 0 and not self.drop_scale:
+                mask = torch.empty(x.shape, device=x.device).bernoulli_(1 - self.drop_rate)
+                x = x * mask
+
         # if using residual, create a copy of the input x and reshape it to match the format of y.
         # Since y has shape [batch, in_dim, in_dim], but x has shape [batch, in_dim],
         # populate the diagonal of each example's matrix with x.
@@ -224,6 +235,15 @@ class KANLayer(nn.Module):
             y = torch.cat([x_diagonal, y], dim=2)  # prepend the residual to y (output)
         postspline = y.clone().permute(0,2,1)
 
+        # Post-spline dropout (excluding the base function). https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKANLayer.py
+        if self.training:
+            if self.drop_mode == 'postspline' and self.drop_rate > 0 and self.drop_scale:
+                mask = torch.empty(y.shape, device=y.device).bernoulli_(1 - self.drop_rate)
+                y = y * mask / (1 - self.drop_rate)
+            elif self.drop_mode == 'postspline' and self.drop_rate > 0 and not self.drop_scale:
+                mask = torch.empty(y.shape, device=y.device).bernoulli_(1 - self.drop_rate)
+                y = y * mask
+
         if self.base_fun == "silu_identity":
             # Hybrid silu/identity base function
             import torch.nn.functional as F
@@ -234,8 +254,22 @@ class KANLayer(nn.Module):
         else:
             base = self.base_fun(x) # (batch, in_dim)
             y = self.scale_base[None,:,:] * base[:,:,None] + self.scale_sp[None,:,:] * y
-        y = self.mask[None,:,:] * y
+        y = self.mask[None,:,:] * y  # [batch, in_dim, out_dim]
         postacts = y.clone().permute(0,2,1)  # [batch, out_dim, in_dim]
+
+        # Post-activation dropout (including base function). https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKANLayer.py
+        if self.training:
+            if self.drop_mode == 'postact' and self.drop_rate > 0 and self.drop_scale:
+                mask = torch.empty(y.shape, device=y.device).bernoulli_(1 - self.drop_rate)
+                y = y * mask / (1 - self.drop_rate)
+            elif self.drop_mode == 'postact' and self.drop_rate > 0 and not self.drop_scale:
+                mask = torch.empty(y.shape, device=y.device).bernoulli_(1 - self.drop_rate)
+                y = y * mask
+            if self.drop_mode == 'postact_input' and self.drop_rate > 0:
+                mask = torch.empty((y.shape[0], y.shape[1], 1), device=y.device).bernoulli_(1 - self.drop_rate).repeat(1, 1, y.shape[2])
+                y = y * mask
+                if self.drop_scale:
+                    y = y / (1 - self.drop_rate)
 
         y = torch.sum(y, dim=1)
         return y, preacts, postacts, postspline
@@ -343,7 +377,7 @@ class KANLayer(nn.Module):
         def get_grid(num_interval):
             x_pos = parent.grid[:,parent.k:-parent.k]
             #print('x_pos', x_pos)
-            sp2 = KANLayer(in_dim=1, out_dim=self.in_dim,k=1,num=x_pos.shape[1]-1,scale_base_mu=0.0, scale_base_sigma=0.0).to(x.device)
+            sp2 = KANLayer(in_dim=1, out_dim=self.in_dim,k=1,num=x_pos.shape[1]-1,scale_base_mu=0.0, scale_base_sigma=0.0, device=x.device)
 
             #print('sp2_grid', sp2.grid[:,sp2.k:-sp2.k].permute(1,0).expand(-1,self.in_dim))
             #print('sp2_coef_shape', sp2.coef.shape)
@@ -391,7 +425,7 @@ class KANLayer(nn.Module):
         >>> kanlayer_small.in_dim, kanlayer_small.out_dim
         (2, 3)
         '''
-        spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun, residual=self.residual)  # @joshuafan
+        spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun, residual=self.residual, device=self.device)  # @joshuafan
         if self.residual:
             in_id_excl_residual = np.array(in_id) - self.in_dim
             in_id_excl_residual = in_id_excl_residual[in_id_excl_residual >= 0]
