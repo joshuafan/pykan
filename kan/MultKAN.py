@@ -1384,8 +1384,9 @@ class MultKAN(nn.Module):
                 if isinstance(in_vars[i], sympy.Expr):
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, f'${latex(in_vars[i])}$', fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 else:
+                    # TODO -0.05 needs to be tuned
                     # plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
-                    plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.02, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
+                    plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.05, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 
                 
 
@@ -1395,8 +1396,9 @@ class MultKAN(nn.Module):
                 if isinstance(out_vars[i], sympy.Expr):
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.15, f'${latex(out_vars[i])}$', fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 else:
+                    # TODO 0.05 needs to be tuned
                     # plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.15, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
-                    plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.02, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
+                    plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.05, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
 
         if title != None:
             plt.gcf().get_axes()[0].text(0.5, (y0+z0) * (len(self.width) - 1) + 0.3, title, fontsize=40 * scale, horizontalalignment='center', verticalalignment='center')
@@ -1475,36 +1477,40 @@ class MultKAN(nn.Module):
         #     reg_ += lamb_l1 * l1 + lamb_entropy * (entropy_row + entropy_col)  # both l1 and entropy
 
         # New version: entropy computed across all edges simultaneously @joshuafan
+        l1 = 0.0
+        entropy = 0.0
+        coeff_l1 = 0.0
+        coeff_diff_l2 = 0.0
+        coeff_diff2_l2 = 0.0
         for i in range(len(acts_scale)):
             vec = acts_scale[i].flatten()
-            l1 = torch.sum(vec)
+            # print(i, "Computing entropy over", acts_scale[i].shape, vec)
+            l1 += torch.sum(vec)
             p_edge = vec / vec.sum()
-            entropy_edge = - torch.sum(p_edge * torch.log2(p_edge + 1e-4))
-            reg_ += lamb_l1 * l1 + lamb_entropy * entropy_edge  # both l1 and entropy
+            entropy += (- torch.sum(p_edge * torch.log2(p_edge + 1e-4)))
 
             # Tsallis alpha-entropy: Eq 9 in https://arxiv.org/pdf/1905.05702 (alpha=1.5)
             # Supposed to induce a sparser distribution than normal Shannon entropy
-            tsallis_entropy_edge = (1.0 / 0.75) * (p_edge - p_edge**1.5).sum()
+            # tsallis_entropy = (1.0 / 0.75) * (p_edge - p_edge**1.5).sum()
 
         # regularize coefficient to encourage spline to be zero
         for i in range(len(self.act_fun)):
-            coeff_l1 = torch.sum(torch.mean(torch.abs(self.act_fun[i].coef), dim=1))
+            coeff_l1 += torch.sum(torch.mean(torch.abs(self.act_fun[i].coef), dim=1))
 
             # Note that self.act_fun[i].coef has shape [in_dim, out_dim, n_splines]
             # By default, diff is over the last dimension (splines)
             # coeff_diff_l1 = torch.diff(self.act_fun[i].coef).abs().sum()
+            # coeff_diff_l1 = torch.sum(torch.mean(torch.abs(torch.diff(self.act_fun[i].coef)), dim=1))
             coeff_diff = torch.diff(self.act_fun[i].coef)
             coeff_diff2 = torch.diff(coeff_diff)  # 2nd order differences
-            coeff_diff_l2 = coeff_diff.square().sum()
-            coeff_diff2_l2 = coeff_diff2.square().sum()
-
-            # coeff_diff_l1 = torch.sum(torch.mean(torch.abs(torch.diff(self.act_fun[i].coef)), dim=1))
-            reg_ += lamb_coef * coeff_l1 + lamb_coefdiff * coeff_diff_l2
+            coeff_diff_l2 += coeff_diff.square().sum()
+            coeff_diff2_l2 += coeff_diff2.square().sum()
 
         # directly regularize the postactivations towards zero
         if return_indiv:
-            return l1, entropy_edge, coeff_l1, coeff_diff_l2, coeff_diff2_l2  #, tsallis_entropy_edge
+            return l1, entropy, coeff_l1, coeff_diff_l2, coeff_diff2_l2  #, tsallis_entropy_edge
         else:
+            reg_ = lamb_l1 * l1 + lamb_entropy * entropy + lamb_coef * coeff_l1 + lamb_coefdiff * coeff_diff_l2
             return reg_
     
     def get_reg(self, reg_metric, lamb_l1, lamb_entropy, lamb_coef, lamb_coefdiff):
@@ -1838,7 +1844,6 @@ class MultKAN(nn.Module):
 
         model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, residual=self.residual, input_size=self.input_size, device=self.device)
         model2.load_state_dict(self.state_dict())
-        
         width_new = [self.width[0]]
         
         for i in range(len(self.acts_scale)):
@@ -1940,9 +1945,7 @@ class MultKAN(nn.Module):
         if self.acts == None:
             self.get_act()
         
-        print("Before prunenode", self.device)
         self = self.prune_node(node_th, log_history=False)
-        print("After prune_node", self.device, self.cache_data.device)
         #self.prune_node(node_th, log_history=False)
         self.forward(self.cache_data)
         self.attribute()

@@ -434,7 +434,7 @@ class KANLayer(nn.Module):
         spb.grid.data = self.grid[in_id_excl_residual]
         spb.coef.data = self.coef[in_id_excl_residual][:,out_id]
         spb.scale_base.data = self.scale_base[in_id][:,out_id]
-        if self.base_fun == "silu_residual":
+        if self.base_fun == "silu_identity":
             spb.scale_silu.data = self.scale_silu[in_id][:,out_id]
             spb.silu_input_offset.data = self.silu_input_offset[in_id][:,out_id]
             spb.silu_input_scale.data = self.silu_input_scale[in_id][:,out_id]
