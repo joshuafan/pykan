@@ -1883,7 +1883,7 @@ class MultKAN(nn.Module):
         
         return model2
     
-    def prune_edge(self, threshold=3e-2, log_history=True):
+    def prune_edge(self, threshold=3e-2, quantile_threshold=None, log_history=True):
         '''
         pruning edges
 
@@ -1908,7 +1908,10 @@ class MultKAN(nn.Module):
         '''
         if self.acts == None:
             self.get_act()
-        
+
+        if quantile_threshold is not None:
+            threshold = torch.quantile(self.edge_scores[0], 1 - quantile_threshold)
+
         for i in range(len(self.width)-1):
             #self.act_fun[i].mask.data = ((self.acts_scale[i] > threshold).permute(1,0)).float()
             old_mask = self.act_fun[i].mask.data
@@ -1917,7 +1920,7 @@ class MultKAN(nn.Module):
         if log_history:
             self.log_history('fix_symbolic')
     
-    def prune(self, node_th=1e-2, edge_th=3e-2):
+    def prune(self, node_th=1e-2, edge_th=3e-2, edge_quantile_th=None):
         '''
         prune (both nodes and edges)
 
@@ -1927,7 +1930,9 @@ class MultKAN(nn.Module):
                 if the attribution score of a node is below node_th, it is considered dead and will be set to zero.
             edge_th : float
                 if the attribution score of an edge is below node_th, it is considered dead and will be set to zero.
-            
+            edge_quantile_th : float
+                if this is set, keep this fraction of edges (instead of using a fixed threshold)
+
         Returns:
         --------
             pruned network : MultKAN
@@ -1949,7 +1954,7 @@ class MultKAN(nn.Module):
         #self.prune_node(node_th, log_history=False)
         self.forward(self.cache_data)
         self.attribute()
-        self.prune_edge(edge_th, log_history=False)
+        self.prune_edge(edge_th, quantile_threshold=edge_quantile_th, log_history=False)
         self.log_history('prune')
         return self
     

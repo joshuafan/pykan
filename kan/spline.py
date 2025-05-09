@@ -1,3 +1,4 @@
+import os
 import torch
 
 
@@ -149,6 +150,8 @@ def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=1):
 
     # Find the least squares fit
     coef = None
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # necessary if running on mac
+
     try:
         coef = torch.linalg.lstsq((B_T @ B) + smoothness_lamb * (D.T @ D), B_T @ y_eval).solution[:, :, :, 0]
     except:  # NOTE @joshuafan may be unncessary now

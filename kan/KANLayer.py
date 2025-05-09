@@ -110,7 +110,7 @@ class KANLayer(nn.Module):
         grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1, device=device)[None,:].expand(self.in_dim, num+1)
         grid = extend_grid(grid, k_extend=k)
         # self.grid = torch.nn.Parameter(grid).requires_grad_(False)
-        self.register_buffer("grid", grid)  # @joshuafan changed grid to a buffer
+        self.register_buffer("grid", grid)  # @joshuafan changed grid to a buffer <-- CHECK THIS
         noises = (torch.rand(self.num+1, self.in_dim, self.spline_out_dim, device=device) - 1/2) * noise_scale / num
 
         self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))
@@ -306,7 +306,7 @@ class KANLayer(nn.Module):
             ids = [int(batch / num_interval * i) for i in range(num_interval)] + [-1]
             grid_adaptive = x_pos[ids, :].permute(1,0)
             # margin = 0.00
-            margin = self.grid_margin * (grid_adaptive[:,[-1]] - grid_adaptive[:,[0]]) # NOTE TODO @joshuafan Trying a wider margin
+            margin = 0.01 + self.grid_margin * (grid_adaptive[:,[-1]] - grid_adaptive[:,[0]]) # NOTE TODO @joshuafan Trying a wider margin
             h = (grid_adaptive[:,[-1]] - grid_adaptive[:,[0]] + 2 * margin)/num_interval
             grid_uniform = grid_adaptive[:,[0]] - margin + h * torch.arange(num_interval+1,)[None, :].to(x.device)
             grid = self.grid_eps * grid_uniform + (1 - self.grid_eps) * grid_adaptive
