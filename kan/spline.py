@@ -79,7 +79,7 @@ def coef2curve(x_eval, grid, coef, k, device="cpu"):
     return y_eval
 
 
-def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=1):
+def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=0.001):  # Check smoothness_lamb
     '''
     converting B-spline curves to B-spline coefficients using least squares.
     
@@ -150,7 +150,6 @@ def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=1):
 
     # Find the least squares fit
     coef = None
-    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"  # necessary if running on mac
 
     try:
         coef = torch.linalg.lstsq((B_T @ B) + smoothness_lamb * (D.T @ D), B_T @ y_eval).solution[:, :, :, 0]

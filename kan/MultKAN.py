@@ -1832,20 +1832,22 @@ class MultKAN(nn.Module):
         self.mask_up = mask_up
         self.mask_down = mask_down
 
+        # NOTE Moved this up here so that remove_node does not change the original model self
+        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, residual=self.residual, input_size=self.input_size, device=self.device)
+        model2.load_state_dict(self.state_dict())
+        width_new = [self.width[0]]
+
         # update act_fun[l].mask up
         for l in range(len(self.acts_scale) - 1):
             for i in range(self.width_in[l + 1]):
                 if i not in active_neurons_up[l + 1]:
-                    self.remove_node(l + 1, i, mode='up',log_history=False)
+                    # NOTE Changed self to model2, to avoid modifying the original model
+                    model2.remove_node(l + 1, i, mode='up',log_history=False)
                     
             for i in range(self.width_out[l + 1]):
                 if i not in active_neurons_down[l]:
-                    self.remove_node(l + 1, i, mode='down',log_history=False)
+                    model2.remove_node(l + 1, i, mode='down',log_history=False)
 
-        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, residual=self.residual, input_size=self.input_size, device=self.device)
-        model2.load_state_dict(self.state_dict())
-        width_new = [self.width[0]]
-        
         for i in range(len(self.acts_scale)):
             
             if i < len(self.acts_scale) - 1:
@@ -1950,13 +1952,13 @@ class MultKAN(nn.Module):
         if self.acts == None:
             self.get_act()
         
-        self = self.prune_node(node_th, log_history=False)
+        self2 = self.prune_node(node_th, log_history=False)
         #self.prune_node(node_th, log_history=False)
-        self.forward(self.cache_data)
-        self.attribute()
-        self.prune_edge(edge_th, quantile_threshold=edge_quantile_th, log_history=False)
-        self.log_history('prune')
-        return self
+        self2.forward(self2.cache_data)
+        self2.attribute()
+        self2.prune_edge(edge_th, quantile_threshold=edge_quantile_th, log_history=False)
+        self2.log_history('prune')
+        return self2
     
     def prune_input(self, threshold=1e-2, active_inputs=None, log_history=True):
         '''
