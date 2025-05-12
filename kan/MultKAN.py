@@ -94,7 +94,7 @@ class MultKAN(nn.Module):
         device : str
     '''
     def __init__(self, width=None, grid=3, k=3, mult_arity = 2, noise_scale=0.3, scale_base_mu=0.0, scale_base_sigma=1.0, base_fun='silu', symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, seed=1, save_act=True, sparse_init=False, residual=False, auto_save=True, first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu',
-                 input_size=None, drop_rate=0.0, drop_mode='postact', drop_scale=True):
+                 input_size=None, drop_rate=0.0, drop_mode='postact', drop_scale=True, absolute_deviation=False):
         '''
         initalize a KAN model
         
@@ -151,7 +151,8 @@ class MultKAN(nn.Module):
                 if set, this is the number of nuemric features. The other features are assumed 
                 to be categorical embeddings (each categorical variable's embedding dim should
                 be equal to the output dim of the network, and are added at the end)
-        
+            absolute_deviation: If True, compute edge scores and node scores using mean absolute deviation (otherwise we use standard deviation)
+
         DropKAN related (see https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKAN.py)
             drop_rate: list
                 A list of floats indicating the rates of drop for the DropKAN mask. Default: 0.0.
@@ -282,6 +283,7 @@ class MultKAN(nn.Module):
             
         self.node_scores = None
         self.edge_scores = None
+        self.absolute_deviation = absolute_deviation
         self.subnode_scores = None
         
         self.cache_data = None
@@ -852,8 +854,12 @@ class MultKAN(nn.Module):
             
             if self.save_act:
                 # save subnode_scale
-                self.subnode_actscale.append(torch.std(x, dim=0).detach())
-            
+                if self.absolute_deviation:
+                    node_deviation = (x - x.mean(dim=0, keepdim=True)).abs().mean(dim=0)
+                else:
+                    node_deviation = torch.std(x, dim=0)
+                self.subnode_actscale.append(node_deviation.detach())
+
             # subnode affine transform
             x = self.subnode_scale[l][None,:] * x + self.subnode_bias[l][None,:]
             
@@ -862,9 +868,14 @@ class MultKAN(nn.Module):
 
                 # self.neurons_scale.append(torch.mean(torch.abs(x), dim=0))
                 #grid_reshape = self.act_fun[l].grid.reshape(self.width_out[l + 1], self.width_in[l], -1)
-                input_range = torch.std(preacts, dim=0) + 0.1
-                output_range_spline = torch.std(postacts_numerical, dim=0) # for training, only penalize the spline part
-                output_range = torch.std(postacts, dim=0) # for visualization, include the contribution from both spline + symbolic
+                if self.absolute_deviation:
+                    input_range = (preacts - preacts.mean(dim=0, keepdim=True)).abs().mean(dim=0) + 0.1
+                    output_range_spline = (postacts_numerical - postacts_numerical.mean(dim=0, keepdim=True)).abs().mean(dim=0)  # for training, only penalize the spline part
+                    output_range = (postacts - postacts.mean(dim=0, keepdim=True)).abs().mean(dim=0)  # for visualization, include the contribution from both spline + symbolic
+                else:
+                    input_range = torch.std(preacts, dim=0) + 0.1
+                    output_range_spline = torch.std(postacts_numerical, dim=0) # for training, only penalize the spline part
+                    output_range = torch.std(postacts, dim=0) # for visualization, include the contribution from both spline + symbolic
                 # save edge_scale
                 self.edge_actscale.append(output_range)
                 
