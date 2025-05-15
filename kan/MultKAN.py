@@ -1415,7 +1415,7 @@ class MultKAN(nn.Module):
             plt.gcf().get_axes()[0].text(0.5, (y0+z0) * (len(self.width) - 1) + 0.3, title, fontsize=40 * scale, horizontalalignment='center', verticalalignment='center')
 
             
-    def reg(self, reg_metric, lamb_l1, lamb_entropy, lamb_coef, lamb_coefdiff, return_indiv=False):
+    def reg(self, reg_metric, lamb_l1, lamb_entropy, lamb_coef, lamb_coefdiff, return_indiv=False, flat_entropy=False):
         '''
         Get regularization
         
@@ -1475,34 +1475,36 @@ class MultKAN(nn.Module):
             raise Exception(f'reg_metric = {reg_metric} not recognized!')
 
         reg_ = 0.
-
-        # # Old version: entropy computed per row/column of vec (input/output)
-        # for i in range(len(acts_scale)):
-        #     vec = acts_scale[i]
-
-        #     l1 = torch.sum(vec)
-        #     p_row = vec / (torch.sum(vec, dim=1, keepdim=True) + 1)
-        #     p_col = vec / (torch.sum(vec, dim=0, keepdim=True) + 1)
-        #     entropy_row = - torch.mean(torch.sum(p_row * torch.log2(p_row + 1e-4), dim=1))
-        #     entropy_col = - torch.mean(torch.sum(p_col * torch.log2(p_col + 1e-4), dim=0))
-        #     reg_ += lamb_l1 * l1 + lamb_entropy * (entropy_row + entropy_col)  # both l1 and entropy
-
-        # New version: entropy computed across all edges simultaneously @joshuafan
         l1 = 0.0
         entropy = 0.0
         coeff_l1 = 0.0
         coeff_diff_l2 = 0.0
         coeff_diff2_l2 = 0.0
-        for i in range(len(acts_scale)):
-            vec = acts_scale[i].flatten()
-            # print(i, "Computing entropy over", acts_scale[i].shape, vec)
-            l1 += torch.sum(vec)
-            p_edge = vec / vec.sum()
-            entropy += (- torch.sum(p_edge * torch.log2(p_edge + 1e-4)))
 
-            # Tsallis alpha-entropy: Eq 9 in https://arxiv.org/pdf/1905.05702 (alpha=1.5)
-            # Supposed to induce a sparser distribution than normal Shannon entropy
-            # tsallis_entropy = (1.0 / 0.75) * (p_edge - p_edge**1.5).sum()
+        if not flat_entropy:
+            # Old version: entropy computed per row/column of vec (input/output)
+            for i in range(len(acts_scale)):
+                vec = acts_scale[i]
+
+                l1 = torch.sum(vec)
+                p_row = vec / (torch.sum(vec, dim=1, keepdim=True) + 1)
+                p_col = vec / (torch.sum(vec, dim=0, keepdim=True) + 1)
+                entropy_row = - torch.mean(torch.sum(p_row * torch.log2(p_row + 1e-4), dim=1))
+                entropy_col = - torch.mean(torch.sum(p_col * torch.log2(p_col + 1e-4), dim=0))
+                entropy += (entropy_row + entropy_col)
+                # reg_ += lamb_l1 * l1 + lamb_entropy * (entropy_row + entropy_col)  # both l1 and entropy
+        else:
+            # New version: entropy computed across all edges simultaneously @joshuafan
+            for i in range(len(acts_scale)):
+                vec = acts_scale[i].flatten()
+                # print(i, "Computing entropy over", acts_scale[i].shape, vec)
+                l1 += torch.sum(vec)
+                p_edge = vec / vec.sum()
+                entropy += (- torch.sum(p_edge * torch.log2(p_edge + 1e-4)))
+
+                # Tsallis alpha-entropy: Eq 9 in https://arxiv.org/pdf/1905.05702 (alpha=1.5)
+                # Supposed to induce a sparser distribution than normal Shannon entropy
+                # tsallis_entropy = (1.0 / 0.75) * (p_edge - p_edge**1.5).sum()
 
         # regularize coefficient to encourage spline to be zero
         for i in range(len(self.act_fun)):
