@@ -120,7 +120,7 @@ def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=0.001):  # Check smoothn
     # except:
     #     print('lstsq failed')
 
-    # NOT USED: anual psuedo-inverse
+    # NOT USED: manual psuedo-inverse
     '''lamb=1e-8
     XtX = torch.einsum('ijmn,ijnp->ijmp', mat.permute(0,1,3,2), mat)
     Xty = torch.einsum('ijmn,ijnp->ijmp', mat.permute(0,1,3,2), y_eval)

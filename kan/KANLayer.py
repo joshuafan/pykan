@@ -114,12 +114,14 @@ class KANLayer(nn.Module):
             # self.mask = torch.nn.Parameter(torch.ones(in_dim, out_dim)).requires_grad_(False)
 
         self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
-                        scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
+                         scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
         self.scale_sp = torch.nn.Parameter(torch.ones(in_dim, out_dim) * scale_sp * 1 / np.sqrt(in_dim) * self.mask).requires_grad_(sp_trainable)  # make scale trainable
         self.base_fun = base_fun
 
+
         self.grid_eps = grid_eps
         self.grid_margin = grid_margin
+
         self.to(device)
 
 
@@ -127,7 +129,6 @@ class KANLayer(nn.Module):
         super(KANLayer, self).to(device)
         self.device = device
         return self
-
 
     def forward(self, x):
         '''
@@ -158,14 +159,15 @@ class KANLayer(nn.Module):
         >>> y.shape, preacts.shape, postacts.shape, postspline.shape
         '''
         batch = x.shape[0]
-
         preacts = x[:,None,:].clone().expand(batch, self.out_dim, self.in_dim)
+
+        base = self.base_fun(x) # (batch, in_dim)
         y = coef2curve(x_eval=x, grid=self.grid, coef=self.coef, k=self.k)  # y: (batch, in_dim, other_out_dim)
         postspline = y.clone().permute(0,2,1)
 
-        base = self.base_fun(x) # (batch, in_dim)
         y = self.scale_base[None,:,:] * base[:,:,None] + self.scale_sp[None,:,:] * y
         y = self.mask[None,:,:] * y  # [batch, in_dim, out_dim]
+
         postacts = y.clone().permute(0,2,1)  # [batch, out_dim, in_dim]
 
         y = torch.sum(y, dim=1)

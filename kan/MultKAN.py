@@ -910,7 +910,6 @@ class MultKAN(nn.Module):
         values = []
         names = []
         for l in range(self.depth):
-            # print("SHAPES. spline_preacts", self.spline_preacts[l].shape, "Postacts", self.spline_postacts[l].shape, "acts", self.acts[l+1].shape)
             # preacts: [batch, out_dim, in_dim], postacts: [batch, out_dim, in_dim], acts[l+1]: [batch, out_dim]
             values.extend([self.spline_preacts[l].cpu().numpy(), self.spline_postacts[l].cpu().numpy(), self.acts[l+1].cpu().numpy()])
             names.extend([f"Layer {l} pre-activations", f"Layer {l} post-activations", f"Layer {l} outputs"])
