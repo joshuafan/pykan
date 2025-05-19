@@ -93,8 +93,8 @@ class MultKAN(nn.Module):
             the number of times rewind() has been called
         device : str
     '''
-    def __init__(self, width=None, grid=3, k=3, mult_arity = 2, noise_scale=0.3, scale_base_mu=0.0, scale_base_sigma=1.0, base_fun='silu', symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, seed=1, save_act=True, sparse_init=False, residual=False, auto_save=True, first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu',
-                 input_size=None, drop_rate=0.0, drop_mode='postact', drop_scale=True, absolute_deviation=False):
+    def __init__(self, width=None, grid=3, k=3, mult_arity = 2, noise_scale=0.3, scale_base_mu=0.0, scale_base_sigma=1.0, base_fun='silu', symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, seed=1, save_act=True, sparse_init=False, auto_save=True, first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu',
+                 input_size=None, absolute_deviation=False):
         '''
         initalize a KAN model
         
@@ -136,8 +136,6 @@ class MultKAN(nn.Module):
                 indicate whether intermediate activations are saved in forward pass
             sparse_init : bool
                 sparse initialization (True) or normal dense initialization. Default: False.
-            residual : bool
-                if residual = True, layers where out_dim > in_dim (except last dim) get a residual connection.
             auto_save : bool
                 indicate whether to automatically save a checkpoint once the model is modified
             state_id : int
@@ -152,14 +150,6 @@ class MultKAN(nn.Module):
                 to be categorical embeddings (each categorical variable's embedding dim should
                 be equal to the output dim of the network, and are added at the end)
             absolute_deviation: If True, compute edge scores and node scores using mean absolute deviation (otherwise we use standard deviation)
-
-        DropKAN related (see https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKAN.py)
-            drop_rate: list
-                A list of floats indicating the rates of drop for the DropKAN mask. Default: 0.0.
-            drop_mode: str
-                Accept the following values 'postspline' the drop mask is applied to the layer's postsplines, 'postact' the drop mask is applied to the layer's postacts, 'dropout' applies a standard dropout layer to the inputs. Default: 'postact'.
-             drop_scale: bool
-                If true, the retained postsplines/postacts are scaled by a factor of 1/(1-drop_rate). Default: True
 
         Returns:
         --------
@@ -193,7 +183,6 @@ class MultKAN(nn.Module):
         self.width = width
         self.input_size = input_size if input_size is not None else width[0][0]
         self.output_size = width[-1][0]
-        self.residual = residual
 
         # if mult_arity is just a scalar, we extend it to a list of lists
         # e.g, mult_arity = [[2,3],[4]] means that in the first hidden layer, 2 mult ops have arity 2 and 3, respectively;
@@ -231,15 +220,8 @@ class MultKAN(nn.Module):
                 k_l = k[l]
             else:
                 k_l = k
-            
-            if isinstance(drop_rate, list):
-                drop_l = drop_rate[l]
-            else:
-                drop_l = drop_rate
 
-            whether_residual = False if (l == self.depth - 1 or width_out[l+1] <= width_in[l]) else residual
-            sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid_l, k=k_l, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_margin=grid_margin, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device, residual=whether_residual,
-                                drop_rate=drop_l, drop_mode=drop_mode, drop_scale=drop_scale)
+            sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid_l, k=k_l, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_margin=grid_margin, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device)
             self.act_fun.append(sp_batch)
 
         self.node_bias = []
@@ -433,10 +415,6 @@ class MultKAN(nn.Module):
             self.act_fun[l].scale_base.data = another_model.act_fun[l].scale_base.data
             self.act_fun[l].scale_sp.data = another_model.act_fun[l].scale_sp.data
             self.act_fun[l].mask.data = another_model.act_fun[l].mask.data
-            if another_model.base_fun == "silu_identity":
-                self.act_fun[l].scale_silu.data = another_model.act_fun[l].scale_silu.data
-                self.act_fun[l].silu_input_offset.data = another_model.act_fun[l].silu_input_offset.data
-                self.act_fun[l].silu_input_scale.data = another_model.act_fun[l].silu_input_scale.data
 
         for l in range(self.depth):
             self.node_bias[l].data = another_model.node_bias[l].data
@@ -1846,7 +1824,7 @@ class MultKAN(nn.Module):
         self.mask_down = mask_down
 
         # NOTE Moved this up here so that remove_node does not change the original model self
-        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, residual=self.residual, input_size=self.input_size, device=self.device)
+        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, input_size=self.input_size, device=self.device)
         model2.load_state_dict(self.state_dict())
         width_new = [self.width[0]]
 
@@ -2789,10 +2767,6 @@ class MultKAN(nn.Module):
                         self.act_fun[l].mask.data[i][j] = torch.tensor(1.)
                         self.act_fun[l].scale_base.data[i][j] = torch.tensor(0.)
                         self.act_fun[l].scale_sp.data[i][j] = torch.tensor(0.)
-                        if self.base_fun == "silu_identity":
-                            self.act_fun[l].scale_silu.data[i][j] = torch.tensor(0.)
-                            self.act_fun[l].silu_input_offset.data[i][j] = torch.tensor(0.)
-                            self.act_fun[l].silu_input_scale.data[i][j] = torch.tensor(0.)
 
         self.get_act(self.cache_data)
         
