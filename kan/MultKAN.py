@@ -1396,8 +1396,8 @@ class MultKAN(nn.Module):
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, f'${latex(in_vars[i])}$', fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 else:
                     # TODO -0.05 needs to be tuned
-                    # plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.05, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
+                    # plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 
                 
 
@@ -1408,8 +1408,8 @@ class MultKAN(nn.Module):
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.15, f'${latex(out_vars[i])}$', fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 else:
                     # TODO 0.05 needs to be tuned
-                    # plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.15, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.05, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
+                    # plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.15, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
 
         if title != None:
             plt.gcf().get_axes()[0].text(0.5, (y0+z0) * (len(self.width) - 1) + 0.3, title, fontsize=40 * scale, horizontalalignment='center', verticalalignment='center')
@@ -1437,7 +1437,7 @@ class MultKAN(nn.Module):
         Returns:
         --------
         If return_indiv True:
-            4 floats: l1 loss, entropy loss, coefficient penalty, coefficient smoothness
+            5 floats: l1 loss, entropy loss, coefficient penalty, coefficient smoothness, 2nd order coefficient smoothness
         If return_indiv False:
             reg_ : torch.float
         
@@ -2022,7 +2022,7 @@ class MultKAN(nn.Module):
         else:
             input_id = torch.tensor(active_inputs, dtype=torch.long).to(self.device)
         
-        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, device=self.device)  # .to(self.device)
+        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, device=self.device)
         model2.load_state_dict(self.state_dict())
 
         model2.act_fun[0] = model2.act_fun[0].get_subset(input_id, torch.arange(self.width_out[1]))
@@ -2172,10 +2172,6 @@ class MultKAN(nn.Module):
             # subnode_score is a 'weight' on how important each output is to each FINAL output. [final_out_dim, out_dim]. In the KAN 2.0 paper this is A_{l,i}.
             # subnode_actscale[l-1] is the standard deviation of the SUMMED post-activations (from all inputs), used to normalize edge_actscale. [out_dim] In the KAN 2.0 paper this is N_{l+1, j}
             # This line computes the first part of Eq 9 in the KAN 2.0 paper: B_{l-1, i, j} = A_{l,j} * E_{l,j} / N_{l+1, j}
-            # print("Layer", l, "Edge actscale", self.edge_actscale[l-1].shape, self.edge_actscale[l-1].mean(), self.edge_actscale[l-1].std())
-            # print("Layer", l, "Subnode score", subnode_score.shape, subnode_score.mean(), subnode_score.std())
-            # print("Layer", l, "Subnode actscale", self.subnode_actscale[l-1].shape, self.subnode_actscale[l-1].mean(), self.subnode_actscale[l-1].std())
-
             # edge_score = torch.einsum('ij,ki,i->kij', self.edge_actscale[l-1], subnode_score.to(device), 1/(self.subnode_actscale[l-1]+1e-4))
             edge_score = torch.einsum('ij,ki->kij', self.edge_actscale[l-1], subnode_score.to(device)) / self.subnode_actscale[l-1].mean() # @joshuafan: Try not dividing by subnode_actscale, since some nodes are inherently less variable.
             edge_scores.append(edge_score)  # edge_score: [final_out_dim, out_dim, in_dim]
@@ -2183,10 +2179,6 @@ class MultKAN(nn.Module):
             # edge to node
             # This line computes the second part of Eq 9 in the KAN 2.0 paper: A_{l-1,i} = \sum_j B_{l-1,i,j}
             node_score = torch.sum(edge_score, dim=1)  # [final_out_dim, in_dim]
-
-            # ATTN @joshuafan: normalize the node score, so the sum across the final outputs is one. 
-            # node_score = node_score / node_score.sum(dim=0, keepdim=True)
-
             node_scores.append(node_score)
 
         self.node_scores_all = list(reversed(node_scores))  # List of num_layers+1 items, although last item (representing the output layer) is just a diagonal

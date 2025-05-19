@@ -101,16 +101,18 @@ class KANLayer(nn.Module):
         self.in_dim = in_dim
         self.num = num
         self.k = k
+
+        grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1, device=device)[None,:].expand(self.in_dim, num+1)
+        grid = extend_grid(grid, k_extend=k)
+        # self.grid = torch.nn.Parameter(grid).requires_grad_(False)
+        self.register_buffer("grid", grid)  # @joshuafan NOTE: Changed grid to a buffer
+
         self.residual = residual
         if self.residual:
             assert self.out_dim > self.in_dim, "If using residual connections, out_dim must be greater than in_dim"
             self.spline_out_dim = self.out_dim - self.in_dim
         else:
             self.spline_out_dim = self.out_dim
-        grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1, device=device)[None,:].expand(self.in_dim, num+1)
-        grid = extend_grid(grid, k_extend=k)
-        # self.grid = torch.nn.Parameter(grid).requires_grad_(False)
-        self.register_buffer("grid", grid)  # @joshuafan changed grid to a buffer <-- CHECK THIS
         noises = (torch.rand(self.num+1, self.in_dim, self.spline_out_dim, device=device) - 1/2) * noise_scale / num
 
         self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))
