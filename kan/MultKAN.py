@@ -1497,9 +1497,12 @@ class MultKAN(nn.Module):
             coeff_diff_l2 += coeff_diff.square().sum()
             coeff_diff2_l2 += coeff_diff2.square().sum()
 
+        # Connection cost: encourage modular connections
+        conn_cost = self.connection_cost
+
         # directly regularize the postactivations towards zero
         if return_indiv:
-            return l1, entropy, coeff_l1, coeff_diff_l2, coeff_diff2_l2  #, tsallis_entropy_edge
+            return l1, entropy, coeff_l1, coeff_diff_l2, coeff_diff2_l2, conn_cost  #, tsallis_entropy_edge
         else:
             reg_ = lamb_l1 * l1 + lamb_entropy * entropy + lamb_coef * coeff_l1 + lamb_coefdiff * coeff_diff_l2
             return reg_
