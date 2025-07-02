@@ -131,14 +131,20 @@ I would like to welcome people to be critical of KANs, but also to be critical o
 
 ## Josh notes
 
-`sciren_clean` branch contains the features needed to run the ScIReN paper.
+### Jupyter notebooks
+pip install nbstripout
+nbstripout --install
+
+
+### Branches
+`master` branch contains the features needed to run the ScIReN paper.
 - 2nd order coefficient difference penalty for regularization
 - 'flat entropy'
 - make grid margin adjustable
 - Changed `prune` so that it doesn't modify the original network
 - plotting improvements 
 
-`master` branch contains additional experimental features that are not used in the ScIReN paper:
+`experimental` branch contains additional experimental features that are not used in the ScIReN paper:
 - residual connections
 - silu_identity activation function
 - dropout
