@@ -208,7 +208,8 @@ class MultKAN(nn.Module):
             base_fun = torch.nn.Identity()
         elif base_fun == 'zero':
             base_fun = lambda x: x*0.
-            
+        self.last_layer = last_layer
+
         self.grid_eps = grid_eps
         self.grid_margin = grid_margin
         self.grid_range = grid_range
@@ -304,7 +305,8 @@ class MultKAN(nn.Module):
                 self.state_id = state_id
             
         self.input_id = torch.arange(self.width_in[0],)
-        
+
+
     def to(self, device):
         '''
         move the model to device
@@ -829,7 +831,7 @@ class MultKAN(nn.Module):
             
             x_numerical, preacts, postacts_numerical, postspline = self.act_fun[l](x)  # x_numerical: [batch, out_dim], preacts/postacts/postspline: [batch, out_dim, in_dim]
             #print(preacts, postacts_numerical, postspline)
-            
+
             if self.symbolic_enabled == True:
                 x_symbolic, postacts_symbolic = self.symbolic_fun[l](x, singularity_avoiding=singularity_avoiding, y_th=y_th)
             else:
@@ -848,7 +850,7 @@ class MultKAN(nn.Module):
 
             # subnode affine transform
             x = self.subnode_scale[l][None,:] * x + self.subnode_bias[l][None,:]
-            
+
             if self.save_act:
                 postacts = postacts_numerical + postacts_symbolic
 
@@ -904,9 +906,8 @@ class MultKAN(nn.Module):
             # x = x + self.biases[l].weight
             # node affine transform
             x = self.node_scale[l][None,:] * x + self.node_bias[l][None,:]
-            
             self.acts.append(x.detach())
-            
+
         x = x + x_categorical.sum(dim=1)
         return x
 
@@ -1834,7 +1835,10 @@ class MultKAN(nn.Module):
         self.mask_down = mask_down
 
         # NOTE Moved this up here so that remove_node does not change the original model self
-        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun_name, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, input_size=self.input_size, device=self.device)
+        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, mult_arity=self.mult_arity,
+                          base_fun=self.base_fun_name, grid_eps=self.grid_eps, grid_margin=self.grid_margin,
+                          ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round,
+                          device=self.device, input_size=self.input_size, absolute_deviation=self.absolute_deviation, last_layer=self.last_layer)
         model2.load_state_dict(self.state_dict())
         width_new = [self.width[0]]
 
