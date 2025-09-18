@@ -44,7 +44,8 @@ class KANLayer(nn.Module):
             device
     """
 
-    def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False):
+    def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False,
+                 drop_rate=0.0, drop_mode='postact', drop_scale=True):
         ''''
         initialize a KANLayer
         
@@ -118,10 +119,11 @@ class KANLayer(nn.Module):
         self.scale_sp = torch.nn.Parameter(torch.ones(in_dim, out_dim) * scale_sp * 1 / np.sqrt(in_dim) * self.mask).requires_grad_(sp_trainable)  # make scale trainable
         self.base_fun = base_fun
 
-
         self.grid_eps = grid_eps
         self.grid_margin = grid_margin
-
+        self.drop_rate = drop_rate
+        self.drop_mode = drop_mode
+        self.drop_scale = drop_scale
         self.to(device)
 
 
@@ -159,16 +161,50 @@ class KANLayer(nn.Module):
         >>> y.shape, preacts.shape, postacts.shape, postspline.shape
         '''
         batch = x.shape[0]
+
+        # Standard (node-based) dropout. https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKANLayer.py
+        if self.training:
+            if self.drop_mode == 'dropout' and self.drop_rate > 0 and self.drop_scale:
+                #print('dropout with scale')
+                mask = torch.empty(x.shape, device=x.device).bernoulli_(1 - self.drop_rate)
+                x = x * mask / (1 - self.drop_rate)
+            elif self.drop_mode == 'dropout' and self.drop_rate > 0 and not self.drop_scale:
+                mask = torch.empty(x.shape, device=x.device).bernoulli_(1 - self.drop_rate)
+                x = x * mask
+
         preacts = x[:,None,:].clone().expand(batch, self.out_dim, self.in_dim)
 
         base = self.base_fun(x) # (batch, in_dim)
         y = coef2curve(x_eval=x, grid=self.grid, coef=self.coef, k=self.k)  # y: (batch, in_dim, other_out_dim)
         postspline = y.clone().permute(0,2,1)
 
+        # Post-spline dropout (excluding the base function). https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKANLayer.py
+        if self.training:
+            if self.drop_mode == 'postspline' and self.drop_rate > 0 and self.drop_scale:
+                mask = torch.empty(y.shape, device=y.device).bernoulli_(1 - self.drop_rate)
+                y = y * mask / (1 - self.drop_rate)
+            elif self.drop_mode == 'postspline' and self.drop_rate > 0 and not self.drop_scale:
+                mask = torch.empty(y.shape, device=y.device).bernoulli_(1 - self.drop_rate)
+                y = y * mask
+
         y = self.scale_base[None,:,:] * base[:,:,None] + self.scale_sp[None,:,:] * y
         y = self.mask[None,:,:] * y  # [batch, in_dim, out_dim]
 
         postacts = y.clone().permute(0,2,1)  # [batch, out_dim, in_dim]
+
+        # Post-activation dropout (including base function). https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKANLayer.py
+        if self.training:
+            if self.drop_mode == 'postact' and self.drop_rate > 0 and self.drop_scale:
+                mask = torch.empty(y.shape, device=y.device).bernoulli_(1 - self.drop_rate)
+                y = y * mask / (1 - self.drop_rate)
+            elif self.drop_mode == 'postact' and self.drop_rate > 0 and not self.drop_scale:
+                mask = torch.empty(y.shape, device=y.device).bernoulli_(1 - self.drop_rate)
+                y = y * mask
+            if self.drop_mode == 'postact_input' and self.drop_rate > 0:
+                mask = torch.empty((y.shape[0], y.shape[1], 1), device=y.device).bernoulli_(1 - self.drop_rate).repeat(1, 1, y.shape[2])
+                y = y * mask
+                if self.drop_scale:
+                    y = y / (1 - self.drop_rate)
 
         y = torch.sum(y, dim=1)
         return y, preacts, postacts, postspline
@@ -322,7 +358,9 @@ class KANLayer(nn.Module):
         >>> kanlayer_small.in_dim, kanlayer_small.out_dim
         (2, 3)
         '''
-        spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun, device=self.device)  # @joshuafan
+        spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun, device=self.device,
+                       grid_eps=self.grid_eps, grid_margin=self.grid_margin)
+                       # sp_trainable=self.sp_trainable,sb_trainable=self.sb_trainable, drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale)  # @joshuafan
         spb.grid.data = self.grid[in_id]
         spb.coef.data = self.coef[in_id][:,out_id]
         spb.scale_base.data = self.scale_base[in_id][:,out_id]

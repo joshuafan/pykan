@@ -96,8 +96,11 @@ class MultKAN(nn.Module):
             the number of times rewind() has been called
         device : str
     '''
-    def __init__(self, width=None, grid=3, k=3, mult_arity = 2, noise_scale=0.3, scale_base_mu=0.0, scale_base_sigma=1.0, base_fun='silu', symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, seed=None, save_act=True, sparse_init=False, auto_save=True, first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu',
-                 input_size=None, absolute_deviation=False, last_layer="kan"):
+    def __init__(self, width=None, grid=3, k=3, mult_arity = 2, noise_scale=0.3, scale_base_mu=0.0, scale_base_sigma=1.0, base_fun='silu', 
+                 symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1],
+                 sp_trainable=True, sb_trainable=True, seed=None, save_act=True, sparse_init=False, auto_save=True,
+                 first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu',
+                 input_size=None, absolute_deviation=False, last_layer="kan", drop_rate=0.0, drop_mode='postact', drop_scale=True):
         '''
         initalize a KAN model
         
@@ -154,6 +157,14 @@ class MultKAN(nn.Module):
                 be equal to the output dim of the network, and are added at the end)
             absolute_deviation: If True, compute edge scores and node scores using mean absolute deviation (otherwise we use standard deviation)
             last_layer: usually 'kan', but can be 'linear' if you want a dot product
+
+            DropKAN related (see https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKAN.py)
+                drop_rate: list
+                    A list of floats indicating the rates of drop for the DropKAN mask. Default: 0.0.
+                drop_mode: str
+                    Accept the following values 'postspline' the drop mask is applied to the layer's postsplines, 'postact' the drop mask is applied to the layer's postacts, 'dropout' applies a standard dropout layer to the inputs. Default: 'postact'.
+                drop_scale: bool
+                    If true, the retained postsplines/postacts are scaled by a factor of 1/(1-drop_rate). Default: True
 
         Returns:
         --------
@@ -213,7 +224,10 @@ class MultKAN(nn.Module):
         self.grid_eps = grid_eps
         self.grid_margin = grid_margin
         self.grid_range = grid_range
-            
+        
+        self.drop_rate = drop_rate
+        self.drop_mode = drop_mode
+        self.drop_scale = drop_scale
         
         for l in range(self.depth):
             # splines
@@ -227,10 +241,15 @@ class MultKAN(nn.Module):
             else:
                 k_l = k
 
+            if isinstance(drop_rate, list):
+                drop_l = drop_rate[l]
+            else:
+                drop_l = drop_rate
+
             if last_layer == "linear" and l == self.depth - 1:
                 sp_batch = LinearLayer(in_dim=width_in[l], out_dim=width_out[l+1], device=device)
             else:
-                sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid_l, k=k_l, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_margin=grid_margin, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device)
+                sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid_l, k=k_l, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_margin=grid_margin, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device, drop_rate=drop_l, drop_mode=drop_mode, drop_scale=drop_scale)
             self.act_fun.append(sp_batch)
 
         self.node_bias = []
@@ -240,7 +259,7 @@ class MultKAN(nn.Module):
         
         globals()['self.node_bias_0'] = torch.nn.Parameter(torch.zeros(3,1)).requires_grad_(False)
         exec('self.node_bias_0' + " = torch.nn.Parameter(torch.zeros(3,1)).requires_grad_(False)")
-        
+
         for l in range(self.depth):
             exec(f'self.node_bias_{l} = torch.nn.Parameter(torch.zeros(width_in[l+1])).requires_grad_(affine_trainable)')
             exec(f'self.node_scale_{l} = torch.nn.Parameter(torch.ones(width_in[l+1])).requires_grad_(affine_trainable)')
@@ -502,7 +521,8 @@ class MultKAN(nn.Module):
                      first_init=False,
                      state_id=self.state_id,
                      round=self.round,
-                     device=self.device)
+                     device=self.device,
+                     )
             
         model_new.initialize_from_another_model(self, self.cache_data)
         model_new.cache_data = self.cache_data
