@@ -513,7 +513,7 @@ class MultKAN(nn.Module):
                      affine_trainable=self.affine_trainable, 
                      grid_eps=self.grid_eps,
                      grid_margin=self.grid_margin,
-                     grid_range=self.grid_range, 
+                     grid_range=self.grid_range,
                      sp_trainable=self.sp_trainable,
                      sb_trainable=self.sb_trainable,
                      ckpt_path=self.ckpt_path,
@@ -522,6 +522,9 @@ class MultKAN(nn.Module):
                      state_id=self.state_id,
                      round=self.round,
                      device=self.device,
+                     drop_rate=self.drop_rate,
+                     drop_mode=self.drop_mode,
+                     drop_scale=self.drop_scale
                      )
             
         model_new.initialize_from_another_model(self, self.cache_data)
@@ -575,7 +578,10 @@ class MultKAN(nn.Module):
             auto_save = model.auto_save,
             ckpt_path = model.ckpt_path,
             round = model.round,
-            device = str(model.device)
+            device = str(model.device),
+            drop_rate=self.drop_rate,
+            drop_mode=self.drop_mode,
+            drop_scale=self.drop_scale,
         )
         
         if dic["device"].isdigit():
@@ -632,8 +638,11 @@ class MultKAN(nn.Module):
                      auto_save=config['auto_save'],
                      first_init=False,
                      ckpt_path=config['ckpt_path'],
-                     round = config['round']+1,
-                     device = config['device'])
+                     round=config['round']+1,
+                     device=config['device'],
+                     drop_rate=config['drop_rate'],
+                     drop_mode=config['drop_mode'],
+                     drop_scale=config['drop_scale'])
 
         model_load.load_state_dict(state)
         model_load.cache_data = torch.load(f'{path}_cache_data')
@@ -1858,7 +1867,8 @@ class MultKAN(nn.Module):
         model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, mult_arity=self.mult_arity,
                           base_fun=self.base_fun_name, grid_eps=self.grid_eps, grid_margin=self.grid_margin,
                           ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round,
-                          device=self.device, input_size=self.input_size, absolute_deviation=self.absolute_deviation, last_layer=self.last_layer)
+                          device=self.device, input_size=self.input_size, absolute_deviation=self.absolute_deviation, last_layer=self.last_layer
+                          drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale,)
         model2.load_state_dict(self.state_dict())
         width_new = [self.width[0]]
 

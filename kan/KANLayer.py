@@ -359,8 +359,9 @@ class KANLayer(nn.Module):
         (2, 3)
         '''
         spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun, device=self.device,
-                       grid_eps=self.grid_eps, grid_margin=self.grid_margin)
-                       # sp_trainable=self.sp_trainable,sb_trainable=self.sb_trainable, drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale)  # @joshuafan
+                       grid_eps=self.grid_eps, grid_margin=self.grid_margin,
+                       sp_trainable=self.sp_trainable,sb_trainable=self.sb_trainable,
+                       drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale)  # @joshuafan
         spb.grid.data = self.grid[in_id]
         spb.coef.data = self.coef[in_id][:,out_id]
         spb.scale_base.data = self.scale_base[in_id][:,out_id]
