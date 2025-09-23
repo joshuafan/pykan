@@ -1867,7 +1867,7 @@ class MultKAN(nn.Module):
         model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, mult_arity=self.mult_arity,
                           base_fun=self.base_fun_name, grid_eps=self.grid_eps, grid_margin=self.grid_margin,
                           ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round,
-                          device=self.device, input_size=self.input_size, absolute_deviation=self.absolute_deviation, last_layer=self.last_layer
+                          device=self.device, input_size=self.input_size, absolute_deviation=self.absolute_deviation, last_layer=self.last_layer,
                           drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale,)
         model2.load_state_dict(self.state_dict())
         width_new = [self.width[0]]

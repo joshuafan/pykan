@@ -121,6 +121,8 @@ class KANLayer(nn.Module):
 
         self.grid_eps = grid_eps
         self.grid_margin = grid_margin
+        self.sb_trainable = sb_trainable
+        self.sp_trainable = sp_trainable
         self.drop_rate = drop_rate
         self.drop_mode = drop_mode
         self.drop_scale = drop_scale
