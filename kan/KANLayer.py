@@ -4,7 +4,6 @@ import numpy as np
 from .spline import *
 from .utils import sparse_mask
 
-
 class KANLayer(nn.Module):
     """
     KANLayer class
@@ -45,7 +44,7 @@ class KANLayer(nn.Module):
     """
 
     def __init__(self, in_dim=3, out_dim=2, num=5, k=3, noise_scale=0.5, scale_base_mu=0.0, scale_base_sigma=1.0, scale_sp=1.0, base_fun=torch.nn.SiLU(), grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1], sp_trainable=True, sb_trainable=True, save_plot_data = True, device='cpu', sparse_init=False,
-                 drop_rate=0.0, drop_mode='postact', drop_scale=True):
+                 drop_rate=0.0, drop_mode='postact', drop_scale=True, batch_norm_spline=False):
         ''''
         initialize a KANLayer
         
@@ -82,6 +81,16 @@ class KANLayer(nn.Module):
             sparse_init : bool
                 if sparse_init = True, sparse initialization is applied.
 
+            DropKAN related (see https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKAN.py)
+                drop_rate: list
+                    A list of floats indicating the rates of drop for the DropKAN mask. Default: 0.0.
+                drop_mode: str
+                    Accept the following values 'postspline' the drop mask is applied to the layer's postsplines, 'postact' the drop mask is applied to the layer's postacts, 'dropout' applies a standard dropout layer to the inputs. Default: 'postact'.
+                drop_scale: bool
+                    If true, the retained postsplines/postacts are scaled by a factor of 1/(1-drop_rate). Default: True
+            batch_norm_spline : bool
+                If true, batch-normalize the output of each (input-output) spline.
+
         Returns:
         --------
             self
@@ -105,7 +114,9 @@ class KANLayer(nn.Module):
         self.register_buffer("grid", grid)  # @joshuafan NOTE: Changed grid to a buffer
         noises = (torch.rand(self.num+1, self.in_dim, self.out_dim, device=device) - 1/2) * noise_scale / num
 
+        # print("Noises", noise_scale, noises)
         self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))
+        # print("Coefs", self.coef)
         
         if sparse_init:
             self.register_buffer("mask", sparse_mask(in_dim, out_dim))
@@ -113,6 +124,11 @@ class KANLayer(nn.Module):
         else:
             self.register_buffer("mask", torch.ones(in_dim, out_dim))
             # self.mask = torch.nn.Parameter(torch.ones(in_dim, out_dim)).requires_grad_(False)
+
+        # Batch-normalized spline
+        self.batch_norm_spline = batch_norm_spline
+        if batch_norm_spline:
+            self.norm = nn.BatchNorm1d(self.in_dim * self.out_dim)
 
         self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
                          scale_base_sigma * (torch.rand(in_dim, out_dim)*2-1) * 1/np.sqrt(in_dim)).requires_grad_(sb_trainable)
@@ -178,6 +194,13 @@ class KANLayer(nn.Module):
 
         base = self.base_fun(x) # (batch, in_dim)
         y = coef2curve(x_eval=x, grid=self.grid, coef=self.coef, k=self.k)  # y: (batch, in_dim, other_out_dim)
+
+        # Batch-normalization of post-splines
+        if self.batch_norm_spline:
+            y = y.reshape(y.shape[0], -1)  # rearrange(y, ('b i o -> b (i o)'))
+            y = self.norm(y) / np.sqrt(self.in_dim)
+            y = y.reshape(y.shape[0], self.in_dim, self.out_dim)  # rearrange(y, ('b (i o) -> b i o'), i=self.in_dim)
+
         postspline = y.clone().permute(0,2,1)
 
         # Post-spline dropout (excluding the base function). https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKANLayer.py
@@ -193,6 +216,8 @@ class KANLayer(nn.Module):
         y = self.mask[None,:,:] * y  # [batch, in_dim, out_dim]
 
         postacts = y.clone().permute(0,2,1)  # [batch, out_dim, in_dim]
+        # print("postacts dist", postacts.mean(dim=0), postacts.std(dim=0))
+        # print("postacts dist per output", postacts.mean(dim=(0, 2)), postacts.std(dim=(0, 2)))
 
         # Post-activation dropout (including base function). https://github.com/Ghaith81/dropkan/blob/master/dropkan/DropKANLayer.py
         if self.training:
@@ -209,6 +234,7 @@ class KANLayer(nn.Module):
                     y = y / (1 - self.drop_rate)
 
         y = torch.sum(y, dim=1)
+        # print("Dist of KANLayer out", y.mean(dim=0), y.std(dim=0))
         return y, preacts, postacts, postspline
 
     def update_grid_from_samples(self, x, mode='sample'):
@@ -236,7 +262,9 @@ class KANLayer(nn.Module):
         batch = x.shape[0]
         #x = torch.einsum('ij,k->ikj', x, torch.ones(self.out_dim, ).to(self.device)).reshape(batch, self.size).permute(1, 0)
         x_pos = torch.sort(x, dim=0)[0]
+        print("X pos", x_pos[0])
         y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
+        print("Y eval", y_eval[0])
         num_interval = self.grid.shape[1] - 1 - 2*self.k
         
         def get_grid(num_interval):
@@ -257,10 +285,15 @@ class KANLayer(nn.Module):
             x_pos = sample_grid.permute(1,0)
             y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
         
+        print("Grid before", self.grid.shape, self.grid[0])
         self.grid.data = extend_grid(grid, k_extend=self.k)
+        print("Grid after", self.grid[0])
         #print('x_pos 2', x_pos.shape)
         #print('y_eval 2', y_eval.shape)
+        print("Update grid before", self.coef[0,0], x_pos[0], y_eval[0])
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
+        print("Update grid after", self.coef[0,0])
+        exit(1)
 
 
     def initialize_grid_from_parent(self, parent, x, mode='sample'):

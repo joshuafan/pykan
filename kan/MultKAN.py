@@ -100,7 +100,8 @@ class MultKAN(nn.Module):
                  symbolic_enabled=True, affine_trainable=False, grid_eps=0.02, grid_margin=0.0, grid_range=[-1, 1],
                  sp_trainable=True, sb_trainable=True, seed=None, save_act=True, sparse_init=False, auto_save=True,
                  first_init=True, ckpt_path='./model', state_id=0, round=0, device='cpu',
-                 input_size=None, absolute_deviation=False, last_layer="kan", drop_rate=0.0, drop_mode='postact', drop_scale=True):
+                 input_size=None, absolute_deviation=False, last_layer="kan", drop_rate=0.0, drop_mode='postact', drop_scale=True,
+                 batch_norm_spline=False):
         '''
         initalize a KAN model
         
@@ -165,6 +166,8 @@ class MultKAN(nn.Module):
                     Accept the following values 'postspline' the drop mask is applied to the layer's postsplines, 'postact' the drop mask is applied to the layer's postacts, 'dropout' applies a standard dropout layer to the inputs. Default: 'postact'.
                 drop_scale: bool
                     If true, the retained postsplines/postacts are scaled by a factor of 1/(1-drop_rate). Default: True
+            batch_norm_spline : bool
+                If true, batch-normalize the output of each (input-output) spline.
 
         Returns:
         --------
@@ -228,6 +231,7 @@ class MultKAN(nn.Module):
         self.drop_rate = drop_rate
         self.drop_mode = drop_mode
         self.drop_scale = drop_scale
+        self.batch_norm_spline = batch_norm_spline
         
         for l in range(self.depth):
             # splines
@@ -249,7 +253,8 @@ class MultKAN(nn.Module):
             if last_layer == "linear" and l == self.depth - 1:
                 sp_batch = LinearLayer(in_dim=width_in[l], out_dim=width_out[l+1], device=device)
             else:
-                sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid_l, k=k_l, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_margin=grid_margin, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device, drop_rate=drop_l, drop_mode=drop_mode, drop_scale=drop_scale)
+                sp_batch = KANLayer(in_dim=width_in[l], out_dim=width_out[l+1], num=grid_l, k=k_l, noise_scale=noise_scale, scale_base_mu=scale_base_mu, scale_base_sigma=scale_base_sigma, scale_sp=1., base_fun=base_fun, grid_eps=grid_eps, grid_margin=grid_margin, grid_range=grid_range, sp_trainable=sp_trainable, sb_trainable=sb_trainable, sparse_init=sparse_init, device=device,
+                                    drop_rate=drop_l, drop_mode=drop_mode, drop_scale=drop_scale, batch_norm_spline=batch_norm_spline)
             self.act_fun.append(sp_batch)
 
         self.node_bias = []
@@ -953,6 +958,21 @@ class MultKAN(nn.Module):
             names.extend([f"Layer {l} pre-activations", f"Layer {l} post-activations", f"Layer {l} outputs"])
         import visualization_utils
         visualization_utils.plot_histogram_multiple(values, names, filename, n_rows=self.depth)
+
+        # Pedantic: for each spline plot histograms of input/output
+        for l in range(self.depth):
+            values = []
+            names = []
+            for in_idx in range(self.spline_preacts[l].shape[2]):
+                values.append(self.cache_data[:, in_idx].cpu().numpy())
+                names.append(f"Input {in_idx}: Inputs")
+                for out_idx in range(self.spline_preacts[l].shape[1]):
+                    values.append(self.spline_postacts[l][:, out_idx, in_idx].cpu().numpy())
+                    names.append(f"Input {in_idx} -> Output {out_idx}: Outputs")
+                    assert torch.allclose(self.spline_preacts[l][:, out_idx, in_idx], self.cache_data[:, in_idx])
+            visualization_utils.plot_histogram_multiple(values, names, filename + "_detailed.png", n_rows=self.spline_preacts[l].shape[2])
+
+
 
 
 
