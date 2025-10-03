@@ -1,10 +1,8 @@
 import torch
 import torch.nn as nn
 import numpy as np
-
 from .KANLayer import KANLayer
 from .LinearLayer import LinearLayer
-
 #from .Symbolic_MultKANLayer import *
 from .Symbolic_KANLayer import Symbolic_KANLayer
 from .LBFGS import *
@@ -527,10 +525,12 @@ class MultKAN(nn.Module):
                      state_id=self.state_id,
                      round=self.round,
                      device=self.device,
+                     absolute_deviation=self.absolute_deviation,
+                     last_layer=self.last_layer,
                      drop_rate=self.drop_rate,
                      drop_mode=self.drop_mode,
-                     drop_scale=self.drop_scale
-                     )
+                     drop_scale=self.drop_scale,
+                     batch_norm_spline=self.batch_norm_spline)
             
         model_new.initialize_from_another_model(self, self.cache_data)
         model_new.cache_data = self.cache_data
@@ -645,9 +645,11 @@ class MultKAN(nn.Module):
                      ckpt_path=config['ckpt_path'],
                      round=config['round']+1,
                      device=config['device'],
+                     absolute_deviation=config['absolute_deviation'],
+                     last_layer=config['last_layer'],
                      drop_rate=config['drop_rate'],
-                     drop_mode=config['drop_mode'],
-                     drop_scale=config['drop_scale'])
+                     drop_scale=config['drop_scale'],
+                     batch_norm_spline=config['batch_norm_spline'])
 
         model_load.load_state_dict(state)
         model_load.cache_data = torch.load(f'{path}_cache_data')
@@ -1186,9 +1188,9 @@ class MultKAN(nn.Module):
             # Also compute function outside of data input range
             min_grid = self.act_fun[l].grid[:, 0]
             max_grid = self.act_fun[l].grid[:, -1]
-            grid_inputs = torch.empty((50, min_grid.shape[0]), device=self.device)
+            grid_inputs = torch.empty((100, min_grid.shape[0]), device=self.device)
             for input_idx in range(min_grid.shape[0]):
-                grid_inputs[:, input_idx] = torch.linspace(min_grid[input_idx], max_grid[input_idx], 50)
+                grid_inputs[:, input_idx] = torch.linspace(min_grid[input_idx], max_grid[input_idx], 100)
             y, grid_preacts, grid_postacts, grid_postspline = self.act_fun[l].forward(grid_inputs)
 
             for i in range(self.width_in[l]):
@@ -1888,7 +1890,7 @@ class MultKAN(nn.Module):
                           base_fun=self.base_fun_name, grid_eps=self.grid_eps, grid_margin=self.grid_margin,
                           ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round,
                           device=self.device, input_size=self.input_size, absolute_deviation=self.absolute_deviation, last_layer=self.last_layer,
-                          drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale,)
+                          drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale, batch_norm_spline=self.batch_norm_spline)
         model2.load_state_dict(self.state_dict())
         width_new = [self.width[0]]
 
@@ -2064,7 +2066,9 @@ class MultKAN(nn.Module):
         else:
             input_id = torch.tensor(active_inputs, dtype=torch.long).to(self.device)
         
-        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round, device=self.device)
+        model2 = MultKAN(copy.deepcopy(self.width), grid=self.grid, k=self.k, base_fun=self.base_fun, mult_arity=self.mult_arity, ckpt_path=self.ckpt_path, auto_save=True, first_init=False, state_id=self.state_id, round=self.round,
+                         device=self.device, absolute_deviation=self.absolute_deviation, last_layer=self.last_layer,
+                         drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale, batch_norm_spline=self.batch_norm_spline)
         model2.load_state_dict(self.state_dict())
 
         model2.act_fun[0] = model2.act_fun[0].get_subset(input_id, torch.arange(self.width_out[1]))
@@ -2590,6 +2594,7 @@ class MultKAN(nn.Module):
 
         # add kanlayer, set mask to zero
         dim_out = self.width_in[-1]
+        raise ValueError("expand_depth, may need to add additional arguments to KANLayer")
         layer = KANLayer(dim_out, dim_out, num=self.grid, k=self.k, device=self.device)
         layer.mask *= 0.
         self.act_fun.append(layer)
@@ -2634,6 +2639,8 @@ class MultKAN(nn.Module):
         --------
             None
         '''
+        raise ValueError("expand_width, may need to add additional arguments to KANLayer")
+
         def _expand(layer_id, n_added_nodes, sum_bool=True, mult_arity=2, added_dim='out'):
             l = layer_id
             in_dim = self.symbolic_fun[l].in_dim

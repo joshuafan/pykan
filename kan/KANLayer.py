@@ -108,16 +108,17 @@ class KANLayer(nn.Module):
         self.num = num
         self.k = k
 
-        grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1, device=device)[None,:].expand(self.in_dim, num+1)
-        grid = extend_grid(grid, k_extend=k)
+        grid = torch.linspace(grid_range[0], grid_range[1], steps=num + 1, device=device)[None,:].expand(self.in_dim, num+1)  # [in_dim, G+1]
+        grid = extend_grid(grid, k_extend=k)  # [in_dim, G+2k+1]
         # self.grid = torch.nn.Parameter(grid).requires_grad_(False)
         self.register_buffer("grid", grid)  # @joshuafan NOTE: Changed grid to a buffer
-        noises = (torch.rand(self.num+1, self.in_dim, self.out_dim, device=device) - 1/2) * noise_scale / num
-
+        noises = (torch.rand(self.num+1, self.in_dim, self.out_dim, device=device) - 1/2) * noise_scale / num  # [G+1, in_dim, out_dim]
         # print("Noises", noise_scale, noises)
-        self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))
-        # print("Coefs", self.coef)
-        
+        self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))  # [in_dim, out_dim, G+k]
+        # print("Grid", self.grid.shape, self.grid[0, :])
+        # print("Noise", noises.shape, noises[:, 0, 0])
+        # print("Coefs", self.coef.shape, self.coef[0, 0, :])
+
         if sparse_init:
             self.register_buffer("mask", sparse_mask(in_dim, out_dim))
             # self.mask = torch.nn.Parameter(sparse_mask(in_dim, out_dim)).requires_grad_(False)
@@ -262,11 +263,13 @@ class KANLayer(nn.Module):
         batch = x.shape[0]
         #x = torch.einsum('ij,k->ikj', x, torch.ones(self.out_dim, ).to(self.device)).reshape(batch, self.size).permute(1, 0)
         x_pos = torch.sort(x, dim=0)[0]
-        print("X pos", x_pos[0])
+        # print("X pos", x_pos[0])
+        # print("Grid", self.grid.shape, self.grid[0])
+        # print("Coef", self.coef.shape, self.coef[0, 0])
         y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
-        print("Y eval", y_eval[0])
+        # print("Y eval", y_eval[0])
         num_interval = self.grid.shape[1] - 1 - 2*self.k
-        
+
         def get_grid(num_interval):
             ids = [int(batch / num_interval * i) for i in range(num_interval)] + [-1]
             grid_adaptive = x_pos[ids, :].permute(1,0)
@@ -285,15 +288,14 @@ class KANLayer(nn.Module):
             x_pos = sample_grid.permute(1,0)
             y_eval = coef2curve(x_pos, self.grid, self.coef, self.k)
         
-        print("Grid before", self.grid.shape, self.grid[0])
+        # print("Grid before", self.grid.shape, self.grid[0])
         self.grid.data = extend_grid(grid, k_extend=self.k)
-        print("Grid after", self.grid[0])
+        # print("Grid after", self.grid[0])
         #print('x_pos 2', x_pos.shape)
         #print('y_eval 2', y_eval.shape)
-        print("Update grid before", self.coef[0,0], x_pos[0], y_eval[0])
+        # print("Update grid before. Coef", self.coef[0,0], "X", x_pos[0], "Y", y_eval[0,0])
         self.coef.data = curve2coef(x_pos, y_eval, self.grid, self.k)
-        print("Update grid after", self.coef[0,0])
-        exit(1)
+        # print("Update grid after. Coef", self.coef[0,0])
 
 
     def initialize_grid_from_parent(self, parent, x, mode='sample'):
@@ -396,7 +398,7 @@ class KANLayer(nn.Module):
         spb = KANLayer(len(in_id), len(out_id), self.num, self.k, base_fun=self.base_fun, device=self.device,
                        grid_eps=self.grid_eps, grid_margin=self.grid_margin,
                        sp_trainable=self.sp_trainable,sb_trainable=self.sb_trainable,
-                       drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale)  # @joshuafan
+                       drop_rate=self.drop_rate, drop_mode=self.drop_mode, drop_scale=self.drop_scale, batch_norm_spline=self.batch_norm_spline)  # @joshuafan
         spb.grid.data = self.grid[in_id]
         spb.coef.data = self.coef[in_id][:,out_id]
         spb.scale_base.data = self.scale_base[in_id][:,out_id]

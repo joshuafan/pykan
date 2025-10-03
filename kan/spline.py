@@ -79,7 +79,7 @@ def coef2curve(x_eval, grid, coef, k, device="cpu"):
     return y_eval
 
 
-def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=1e-6):  # Check smoothness_lamb
+def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=0.001):  # Check smoothness_lamb
     '''
     converting B-spline curves to B-spline coefficients using least squares.
     
@@ -119,6 +119,7 @@ def curve2coef(x_eval, y_eval, grid, k, smoothness_lamb=1e-6):  # Check smoothne
     #     coef = torch.linalg.lstsq(mat, y_eval).solution[:,:,:,0]
     # except:
     #     print('lstsq failed')
+
 
     # NOT USED: manual psuedo-inverse
     '''lamb=1e-8
