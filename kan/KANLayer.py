@@ -3,6 +3,7 @@ import torch.nn as nn
 import numpy as np
 from .spline import *
 from .utils import sparse_mask
+from einops import rearrange
 
 class KANLayer(nn.Module):
     """
@@ -128,7 +129,7 @@ class KANLayer(nn.Module):
 
         # Batch-normalized spline
         self.batch_norm_spline = batch_norm_spline
-        if batch_norm_spline:
+        if self.batch_norm_spline:
             self.norm = nn.BatchNorm1d(self.in_dim * self.out_dim)
 
         self.scale_base = torch.nn.Parameter(scale_base_mu * 1 / np.sqrt(in_dim) + \
@@ -198,9 +199,9 @@ class KANLayer(nn.Module):
 
         # Batch-normalization of post-splines
         if self.batch_norm_spline:
-            y = y.reshape(y.shape[0], -1)  # rearrange(y, ('b i o -> b (i o)'))
+            y = rearrange(y, 'b i o -> b (i o) 1')
             y = self.norm(y) / np.sqrt(self.in_dim)
-            y = y.reshape(y.shape[0], self.in_dim, self.out_dim)  # rearrange(y, ('b (i o) -> b i o'), i=self.in_dim)
+            y = rearrange(y, 'b (i o) 1 -> b i o', i=self.in_dim)
 
         postspline = y.clone().permute(0,2,1)
 

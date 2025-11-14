@@ -1255,6 +1255,15 @@ class MultKAN(nn.Module):
                     plt.savefig(f'{folder}/sp_{l}_{i}_{j}_ticks.png')  # , bbox_inches="tight", dpi=400)
                     plt.close()
 
+                    # Version with line at datapoints
+                    plt.xticks()  # Restore default ticks
+                    plt.yticks()
+                    plt.plot(self.acts[l][:, i][rank].cpu().detach().numpy(), self.spline_postacts[l][:, j, i][rank].cpu().detach().numpy())  # , color=color, lw=10)  # @joshuafan changed lw (line width)
+                    plt.xlabel("Input")
+                    plt.ylabel("Post-activation output")
+                    plt.savefig(f'{folder}/sp_{l}_{i}_{j}_line.png')  # , bbox_inches="tight", dpi=400)
+                    plt.close()
+
         def score2alpha(score):
             return np.tanh(beta * score)
 
@@ -1433,7 +1442,7 @@ class MultKAN(nn.Module):
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, f'${latex(in_vars[i])}$', fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 else:
                     # TODO -0.05 needs to be tuned
-                    plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.05, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
+                    plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.02, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                     # plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), -0.1, in_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 
                 
@@ -1445,13 +1454,12 @@ class MultKAN(nn.Module):
                     plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.15, f'${latex(out_vars[i])}$', fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                 else:
                     # TODO 0.05 needs to be tuned
-                    plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.05, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
+                    plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.02, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
                     # plt.gcf().get_axes()[0].text(1 / (2 * (n)) + i / (n), (y0+z0) * (len(self.width) - 1) + 0.15, out_vars[i], fontsize=40 * scale * varscale, horizontalalignment='center', verticalalignment='center')
 
         if title != None:
             plt.gcf().get_axes()[0].text(0.5, (y0+z0) * (len(self.width) - 1) + 0.3, title, fontsize=40 * scale, horizontalalignment='center', verticalalignment='center')
 
-            
     def reg(self, reg_metric, lamb_l1, lamb_entropy, lamb_coef, lamb_coefdiff, return_indiv=False, flat_entropy=False):
         '''
         Get regularization
