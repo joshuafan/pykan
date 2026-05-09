@@ -114,9 +114,8 @@ class KANLayer(nn.Module):
         # self.grid = torch.nn.Parameter(grid).requires_grad_(False)
         self.register_buffer("grid", grid)  # @joshuafan NOTE: Changed grid to a buffer
         noises = (torch.rand(self.num+1, self.in_dim, self.out_dim, device=device) - 1/2) * noise_scale / num  # [G+1, in_dim, out_dim]
-        # print("Noises", noise_scale, noises)
         self.coef = torch.nn.Parameter(curve2coef(self.grid[:,k:-k].permute(1,0), noises, self.grid, k))  # [in_dim, out_dim, G+k]
-        # print("Grid", self.grid.shape, self.grid[0, :])
+        # print("KANLAYER: Grid", self.grid.shape, self.grid[0, :])
         # print("Noise", noises.shape, noises[:, 0, 0])
         # print("Coefs", self.coef.shape, self.coef[0, 0, :])
 
