@@ -2235,6 +2235,10 @@ class MultKAN(nn.Module):
 
         for l in range(l_end,0,-1):
 
+            # Adjust by node_scale. For example, if a node has very low variance in its post-activation,
+            # but is then multiplied by a large value in node_scale, then those edges are actually important.
+            node_scores[-1] = node_scores[-1] * self.node_scale[l-1].mean()
+
             # node to subnode
             # @joshuafan: I think this only does something if there are multiplicative nodes.
             # If there are no multiplicative nodes, subnode_score is the same as node_score.
@@ -2248,6 +2252,10 @@ class MultKAN(nn.Module):
             subnode_scores.append(subnode_score)
             # subnode to edge
             #print(self.edge_actscale[l-1].device, subnode_score.device, self.subnode_actscale[l-1].device)
+
+            # Adjust by subnode_scale. For example, if a node has very low variance in its post-activation,
+            # but is then multiplied by a large value in subnode_scale, then those edges are actually important.
+            subnode_scores[-1] = subnode_scores[-1] * self.subnode_scale[l-1].mean()
 
             # @joshuafan:
             # edge_actscale[l-1] is the standard deviation of the post-activations (across the batch) for each input-output pair. Shape: [out_dim, in_dim]. In the KAN2.0 paper this is E_{l,i,j}

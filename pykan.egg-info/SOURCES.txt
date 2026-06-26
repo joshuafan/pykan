@@ -2,12 +2,10 @@ LICENSE
 README.md
 setup.py
 kan/KANLayer.py
-kan/KANLayer_orig.py
 kan/LBFGS.py
 kan/LinearLayer.py
 kan/MLP.py
 kan/MultKAN.py
-kan/MultKAN_orig.py
 kan/Symbolic_KANLayer.py
 kan/__init__.py
 kan/compiler.py

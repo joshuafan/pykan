@@ -156,6 +156,9 @@ I would like to welcome people to be critical of KANs, but also to be critical o
 pip install nbstripout
 nbstripout --install
 
+### Subnode scale issue
+If a node has very low variance in its post-activation,
+but is then multiplied by a large value in subnode_scale, then those edges are actually important.
 
 ### Branches
 `master` branch contains the features needed to run the ScIReN paper.
